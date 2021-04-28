@@ -1,3 +1,7 @@
+INPUT = input/3x3-sorted.txt
+OUTPUT = output/out.txt
+N = 2
+
 SHELL=/bin/sh
 CC = mpicc
 CFLAGS = -std=c99 -O3
@@ -17,4 +21,4 @@ clean:
 	$(CC) $(CFLAGS) -c $<
 
 run: shearsort
-	mpirun -n 2 ./shearsort input/4x4.txt output/out.txt
+	mpirun -n $(N) ./shearsort $(INPUT) $(OUTPUT)

@@ -1,10 +1,10 @@
-INPUT = input/3x3-sorted.txt
+INPUT = input/4x4.txt
 OUTPUT = output/out.txt
 N = 2
 
 SHELL=/bin/sh
 CC = mpicc
-CFLAGS = -std=c99 -O3
+CFLAGS = -g -std=c99 -O0
 LIBS = -lm
 
 BIN = shearsort

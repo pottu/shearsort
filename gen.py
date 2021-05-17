@@ -15,7 +15,7 @@ except:
 with open("input/{}x{}.txt".format(str(n), str(n)), "w") as f:
   f.write(str(n) + '\n')
   
-  nums = random.choices(range(LB, UB), k=n*n)
+  nums = random.sample(range(LB, UB), k=n*n)
 
   for row in range(n):
     for col in range(n):

@@ -104,6 +104,7 @@ bool check_same_elements(int n, int32_t *M, char *input_file)
   for (int i = 0; i < n*n; i++) {
     if (result[i] != initial[i]) {
       ret = false;
+      printf("Different elements detected!\n");
       break;
     }
   }
@@ -216,22 +217,19 @@ void exchange_and_merge(int partner, bool even_rank, int w, int h, int32_t* M)
   int offset = even_rank ? w : 0;
 
   MPI_Sendrecv(
-      M + offset, // const void *sendbuf
-      1, // int sendcount
-      TYPE_ROW_SEND, // MPI_Datatype sendtype
-      partner, // int dest 
-      0, // int sendtag
-      partner_slice, // void *recvbuf
-      1, // int recvcount
-      TYPE_ROW_RECV, // MPI_Datatype recvtype
-      partner, // int source
-      0, // int recvtag
-      MPI_COMM_WORLD, // MPI_Comm comm
+      M + offset,       // const void *sendbuf
+      1,                // int sendcount
+      TYPE_ROW_SEND,    // MPI_Datatype sendtype
+      partner,          // int dest 
+      0,                // int sendtag
+      partner_slice,    // void *recvbuf
+      1,                // int recvcount
+      TYPE_ROW_RECV,    // MPI_Datatype recvtype
+      partner,          // int source
+      0,                // int recvtag
+      MPI_COMM_WORLD,   // MPI_Comm comm
       MPI_STATUS_IGNORE // MPI_Status *status
   );
-
-  int rank;
-  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
   int partner_row = 0;
   int32_t merged[w*2];
@@ -240,76 +238,25 @@ void exchange_and_merge(int partner, bool even_rank, int w, int h, int32_t* M)
 
     if (even_rank) {
       merge(&M[row * w], w, &partner_slice[partner_row * w], w, merged, less);
-      //for (int i = 0; i < w; i++) {
-      //  printf("%d ", M[row*w + i]);
-      //}
-
-      //printf("and ");
-      //for (int i = 0; i < w; i++) {
-      //  printf("%d ", partner_slice[partner_row*w + i]);
-      //}
-      //printf("into ");
-      //for (int i = 0; i < w*2; i++) {
-      //  printf("%d ", merged[i]);
-      //}
-      //printf("\n");
       memcpy(&M[row * w], merged, s);
       memcpy(&partner_slice[partner_row * w], &merged[w], s);
-      //printf("After cpy ");
-      //for (int i = 0; i < w; i++) {
-      //  printf("%d ", M[row*w + i]);
-      //}
-
-      //printf("and partner ");
-      //for (int i = 0; i < w; i++) {
-      //  printf("%d ", partner_slice[partner_row*w + i]);
-      //}
-      //printf("\n");
     } else {
       merge(&M[row * w], w, &partner_slice[partner_row * w], w, merged, greater_equal);
-      //printf("[%d] Merged ", rank);
-      //for (int i = 0; i < w; i++) {
-      //  printf("%d ", M[row*w + i]);
-      //}
-
-      //printf("and ");
-      //for (int i = 0; i < w; i++) {
-      //  printf("%d ", partner_slice[partner_row*w + i]);
-      //}
-      //printf("into ");
-      //for (int i = 0; i < w*2; i++) {
-      //  printf("%d ", merged[i]);
-      //}
-      //printf("\n");
       memcpy(&M[row * w], &merged[w], s);
       memcpy(&partner_slice[partner_row * w], merged, s);
-      //printf("After cpy ");
-      //for (int i = 0; i < w; i++) {
-      //  printf("%d ", M[row*w + i]);
-      //}
-
-      //printf("and partner ");
-      //for (int i = 0; i < w; i++) {
-      //  printf("%d ", partner_slice[partner_row*w + i]);
-      //}
-      //printf("\n");
     }
     partner_row += 1;
   }
 
-
-  MPI_Sendrecv(
-      partner_slice, // const void *sendbuf
-      w * (h/2), // int sendcount
-      MPI_INT32_T, // MPI_Datatype sendtype
-      partner, // int dest 
-      1, // int sendtag
-      partner_slice, // void *recvbuf
-      w * (h/2), // int recvcount
-      MPI_INT32_T, // MPI_Datatype recvtype
-      partner, // int source
-      1, // int recvtag
-      MPI_COMM_WORLD, // MPI_Comm comm
+  MPI_Sendrecv_replace(
+      partner_slice, // void *buf, 
+      w * (h/2), // int count, 
+      MPI_INT32_T, // MPI_Datatype datatype,
+      partner, // int dest, 
+      0, // int sendtag, 
+      partner, // int source, 
+      0, // int recvtag,
+      MPI_COMM_WORLD, // MPI_Comm comm, 
       MPI_STATUS_IGNORE // MPI_Status *status
   );
 
@@ -346,8 +293,6 @@ int main(int argc, char **argv)
   // Track if own rank is odd or even.
   bool even_rank = rank % 2 == 0; 
   
-  // Rank of paired partner process for exchanges.
-  int partner = even_rank ? rank + 1 : rank - 1;
 
   int n; // Size of matrix
   int32_t* M = NULL; // Input matrix
@@ -365,9 +310,6 @@ int main(int argc, char **argv)
   const int h = n;
 
   // Type for rows for handy send/receives.
-  //MPI_Datatype row_type;
-  //MPI_Type_contiguous(n, MPI_INT32_T, &row_type);
-  //MPI_Type_commit(&row_type);
   MPI_Datatype TYPE_TMP, TYPE_COL_SEND, TYPE_COL_RECV;
 
   MPI_Type_vector(h, 1, h, MPI_INT32_T, &TYPE_TMP);
@@ -380,18 +322,14 @@ int main(int argc, char **argv)
   MPI_Type_free(&TYPE_TMP);
   MPI_Type_commit(&TYPE_COL_RECV);
 
-  // Each process' individual slice of rows.
+  // Each process' individual slice of columns.
   int32_t *slice = calloc(w * h, sizeof(*slice));
 
 
   // ---- Shearsort ----------------------------------------
-
   if (rank == 0) {
-    print_matrix(n, M);
+  //  print_matrix(n, M);
   }
-
-
-
 
   // Scatter initial matrix column slices.
   MPI_Scatter(
@@ -405,14 +343,6 @@ int main(int argc, char **argv)
       MPI_COMM_WORLD // MPI_Comm comm
   );
 
-  
-
-  // IDEA:
-  // 1. Sort rows locally,
-  // 2. Pairwise exchange rows
-  // 3. Merge rows
-  // 4. Return new split
-  // 5. Sort columns fully locally.
   int num_steps = ceil(log2(n)) + 1;
   for (int step = 0; step < num_steps; step++) {
     // Do for d steps..
@@ -426,12 +356,24 @@ int main(int argc, char **argv)
       }
     }
 
-    exchange_and_merge(partner, even_rank, w, h, slice);
+    // Rank of paired partner process for exchanges.
+    for (int i = 1; i <= num_PEs*2; i++) {
+      int partner = -1;
+      if (i % 2 == 0) {
+        partner = even_rank ? rank + 1 : rank - 1;
+      }
+      else {
+        partner = even_rank ? rank - 1 : rank + 1;
+      }
+      if (partner >= 0 && partner < num_PEs) {
+        exchange_and_merge(partner, even_rank, w, h, slice);
+      }
+
+        
+    }
     
     sort_columns(w, h, slice);
   }
-
-//  print_slice(w, h, slice);
 
   MPI_Gather(
       slice, // const void *sendbuf,

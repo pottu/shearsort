@@ -357,7 +357,7 @@ int main(int argc, char **argv)
     }
 
     // Rank of paired partner process for exchanges.
-    for (int i = 1; i <= num_PEs*2; i++) {
+    for (int i = 1; i <= num_PEs; i++) {
       int partner = -1;
       if (i % 2 == 0) {
         partner = even_rank ? rank + 1 : rank - 1;

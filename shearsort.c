@@ -203,6 +203,9 @@ void merge(const int32_t *v1, int n1, const int32_t *v2, int n2,
 
 void exchange_and_merge(int partner, bool even_rank, int w, int h, int32_t* M)
 {
+  int rank;
+  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
   // TODO: stack array?
   int32_t* partner_slice = calloc(w * (h/2), sizeof(*partner_slice));
 
@@ -213,23 +216,26 @@ void exchange_and_merge(int partner, bool even_rank, int w, int h, int32_t* M)
   MPI_Type_commit(&TYPE_ROW_SEND);
   MPI_Type_commit(&TYPE_ROW_RECV);
 
-  // Even ranks send even rows, odd ranks odd rows.
+  // Even ranks send even rows, odd ranks odd rows. ????
   int offset = even_rank ? w : 0;
 
+  // TODO: tags?
   MPI_Sendrecv(
       M + offset,       // const void *sendbuf
       1,                // int sendcount
       TYPE_ROW_SEND,    // MPI_Datatype sendtype
       partner,          // int dest 
-      0,                // int sendtag
+      rank,                // int sendtag
       partner_slice,    // void *recvbuf
       1,                // int recvcount
       TYPE_ROW_RECV,    // MPI_Datatype recvtype
       partner,          // int source
-      0,                // int recvtag
+      partner,                // int recvtag
       MPI_COMM_WORLD,   // MPI_Comm comm
       MPI_STATUS_IGNORE // MPI_Status *status
   );
+
+
 
   int partner_row = 0;
   int32_t merged[w*2];
@@ -238,10 +244,14 @@ void exchange_and_merge(int partner, bool even_rank, int w, int h, int32_t* M)
 
     if (even_rank) {
       merge(&M[row * w], w, &partner_slice[partner_row * w], w, merged, less);
+    } else {
+      merge(&M[row * w], w, &partner_slice[partner_row * w], w, merged, greater_equal);
+    }
+
+    if (rank < partner) {
       memcpy(&M[row * w], merged, s);
       memcpy(&partner_slice[partner_row * w], &merged[w], s);
     } else {
-      merge(&M[row * w], w, &partner_slice[partner_row * w], w, merged, greater_equal);
       memcpy(&M[row * w], &merged[w], s);
       memcpy(&partner_slice[partner_row * w], merged, s);
     }
@@ -253,9 +263,9 @@ void exchange_and_merge(int partner, bool even_rank, int w, int h, int32_t* M)
       w * (h/2), // int count, 
       MPI_INT32_T, // MPI_Datatype datatype,
       partner, // int dest, 
-      0, // int sendtag, 
+      rank, // int sendtag, 
       partner, // int source, 
-      0, // int recvtag,
+      partner, // int recvtag,
       MPI_COMM_WORLD, // MPI_Comm comm, 
       MPI_STATUS_IGNORE // MPI_Status *status
   );
@@ -328,20 +338,23 @@ int main(int argc, char **argv)
 
   // ---- Shearsort ----------------------------------------
   if (rank == 0) {
-  //  print_matrix(n, M);
+    //print_matrix(n, M);
   }
 
   // Scatter initial matrix column slices.
   MPI_Scatter(
-      M, // const void *sendbuf
-      w, // int sendcount
+      M,             // const void *sendbuf
+      w,             // int sendcount
       TYPE_COL_SEND, // MPI_Datatype sendtype
-      slice, // void *recvbuf
-      w, // int recvcount
+      slice,         // void *recvbuf
+      w,             // int recvcount
       TYPE_COL_RECV, // MPI_Datatype recvtype
-      ROOT, // int root
+      ROOT,          // int root
       MPI_COMM_WORLD // MPI_Comm comm
   );
+
+  // Start timer.
+  const double start = MPI_Wtime();
 
   int num_steps = ceil(log2(n)) + 1;
   for (int step = 0; step < num_steps; step++) {
@@ -357,7 +370,7 @@ int main(int argc, char **argv)
     }
 
     // Rank of paired partner process for exchanges.
-    for (int i = 1; i <= num_PEs; i++) {
+    for (int i = 0; i < num_PEs; i++) {
       int partner = -1;
       if (i % 2 == 0) {
         partner = even_rank ? rank + 1 : rank - 1;
@@ -368,12 +381,13 @@ int main(int argc, char **argv)
       if (partner >= 0 && partner < num_PEs) {
         exchange_and_merge(partner, even_rank, w, h, slice);
       }
-
-        
     }
     
+
+    // Skip last step?
     sort_columns(w, h, slice);
   }
+
 
   MPI_Gather(
       slice, // const void *sendbuf,
@@ -386,10 +400,31 @@ int main(int argc, char **argv)
       MPI_COMM_WORLD // MPI_Comm comm
   );
 
+  // Stop timer.
+  const double my_execution_time = MPI_Wtime() - start;
+
+  // Find largest execution time.
+  double slowest = 0;
+  MPI_Reduce(
+      &my_execution_time, 
+      &slowest, 
+      1,
+      MPI_DOUBLE, 
+      MPI_MAX, 
+      0, 
+      MPI_COMM_WORLD
+  );
+
+  // Output execution time.
+  if (rank == ROOT) {
+    printf("%lf\n", slowest);
+  }
+
+
   // TODO: Check only if user wants to.
   if (rank == ROOT) {
-    printf("Sorted:\n");
-    print_matrix(n, M);
+    //printf("Sorted:\n");
+    print_matrix_file(n, M, output_file);
     if (checker(n, M, input_file)) {
       printf("Correct!\n");
     } else {

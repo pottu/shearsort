@@ -1,6 +1,6 @@
-INPUT = input/4x4.txt
+INPUT = input/32x32.txt
 OUTPUT = output/out.txt
-N = 2
+N = 4
 
 SHELL=/bin/sh
 CC = mpicc

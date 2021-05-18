@@ -3,8 +3,8 @@
 import sys
 import random
 
-LB = 10
-UB = 100
+LB = -1000000000
+UB = 10000000000
 
 try:
   n = int(sys.argv[1])

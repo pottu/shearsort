@@ -158,10 +158,42 @@ void sort_column(int col, int w, int h, int32_t* M) {
   }
 }
 
+long partition(int32_t *data, int n, int col, long left, long right, long pivotIndex) {
+  const int32_t pivotValue = data[pivotIndex*n+col];
+  int32_t temp = data[pivotIndex*n+col];
+  data[pivotIndex*n+col] = data[right*n+col];
+  data[right*n+col] = temp;
+  long storeIndex = left;
+
+  for (long i = left; i < right; i++) {
+    if (data[i*n+col] <= pivotValue) {
+      temp = data[i*n+col];
+      data[i*n+col] = data[storeIndex*n+col];
+      data[storeIndex*n+col] = temp;
+      storeIndex++;
+    }
+  }
+  temp = data[storeIndex*n+col];
+  data[storeIndex*n+col] = data[right*n+col];
+  data[right*n+col] = temp;
+  return storeIndex;
+}
+
+void quicksort(int32_t *data, int n, int col, long left, long right) {
+
+  if (right > left) {
+    long pivotIndex = left + (right - left) / 2;
+    long pivotNewIndex = partition(data, n, col, left, right, pivotIndex);
+    quicksort(data, n, col, left, pivotNewIndex - 1);
+    quicksort(data, n, col, pivotNewIndex + 1, right);
+  }
+}
+
 void sort_columns(int w, int h, int32_t* M)
 {
   for (int col = 0; col < w; col++) {
-    sort_column(col, w, h, M);
+    quicksort(M, w, col, 0, h-1);
+    //sort_column(col, w, h, M);
   }
 }
 
@@ -383,7 +415,6 @@ int main(int argc, char **argv)
       }
     }
     
-
     // Skip last step?
     sort_columns(w, h, slice);
   }

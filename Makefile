@@ -4,7 +4,7 @@ N = 4
 
 SHELL=/bin/sh
 CC = mpicc
-CFLAGS = -g -std=c99 -O0
+CFLAGS = -g -std=c99 -O3
 LIBS = -lm
 
 BIN = shearsort

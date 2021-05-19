@@ -7,6 +7,7 @@
 #include <string.h>
 
 #define ROOT 0
+#define TAG  0
 
 // ---- INPUT / OUTPUT -------------------------------------
 void bad_input() {
@@ -189,6 +190,17 @@ void quicksort(int32_t *data, int n, int col, long left, long right) {
   }
 }
 
+void sort_rows(int w, int h, int32_t *M)
+{
+  for (int row = 0; row < h; row++) {
+    if (even(row)) {
+      qsort(&M[row*w], w, sizeof(int32_t), ascending);
+    } else {
+      qsort(&M[row*w], w, sizeof(int32_t), descending);
+    }
+  }
+}
+
 void sort_columns(int w, int h, int32_t* M)
 {
   for (int col = 0; col < w; col++) {
@@ -257,12 +269,12 @@ void exchange_and_merge(int partner, bool even_rank, int w, int h, int32_t* M)
       1,                // int sendcount
       TYPE_ROW_SEND,    // MPI_Datatype sendtype
       partner,          // int dest 
-      rank,                // int sendtag
+      TAG,              // int sendtag
       partner_slice,    // void *recvbuf
       1,                // int recvcount
       TYPE_ROW_RECV,    // MPI_Datatype recvtype
       partner,          // int source
-      partner,                // int recvtag
+      TAG,              // int recvtag
       MPI_COMM_WORLD,   // MPI_Comm comm
       MPI_STATUS_IGNORE // MPI_Status *status
   );
@@ -291,14 +303,14 @@ void exchange_and_merge(int partner, bool even_rank, int w, int h, int32_t* M)
   }
 
   MPI_Sendrecv_replace(
-      partner_slice, // void *buf, 
-      w * (h/2), // int count, 
-      MPI_INT32_T, // MPI_Datatype datatype,
-      partner, // int dest, 
-      rank, // int sendtag, 
-      partner, // int source, 
-      partner, // int recvtag,
-      MPI_COMM_WORLD, // MPI_Comm comm, 
+      partner_slice,    // void *buf, 
+      w * (h/2),        // int count, 
+      MPI_INT32_T,      // MPI_Datatype datatype,
+      partner,          // int dest, 
+      TAG,              // int sendtag, 
+      partner,          // int source, 
+      TAG,              // int recvtag,
+      MPI_COMM_WORLD,   // MPI_Comm comm, 
       MPI_STATUS_IGNORE // MPI_Status *status
   );
 
@@ -315,7 +327,22 @@ void exchange_and_merge(int partner, bool even_rank, int w, int h, int32_t* M)
 }
 
 
-// ---- MAIN -----------------------------------------------
+void odd_even_sort(int w, int h, int32_t *slice, int rank, int num_PEs, bool even_rank)
+{
+  for (int i = 0; i < num_PEs; i++) {
+    int partner = -1;
+    if (i % 2 == 0) {
+      partner = even_rank ? rank + 1 : rank - 1;
+    } else {
+      partner = even_rank ? rank - 1 : rank + 1;
+    }
+    if (partner >= 0 && partner < num_PEs) {
+      exchange_and_merge(partner, even_rank, w, h, slice);
+    }
+  }
+}
+
+// ---- main -----------------------------------------------
 int main(int argc, char **argv) 
 {
   if (3 != argc) {
@@ -334,7 +361,6 @@ int main(int argc, char **argv)
   
   // Track if own rank is odd or even.
   bool even_rank = rank % 2 == 0; 
-  
 
   int n; // Size of matrix
   int32_t* M = NULL; // Input matrix
@@ -351,27 +377,24 @@ int main(int argc, char **argv)
   const int w = n / num_PEs;
   const int h = n;
 
+  // Each process' individual slice of columns.
+  int32_t *slice = calloc(w * h, sizeof(*slice));
+  
   // Type for rows for handy send/receives.
   MPI_Datatype TYPE_TMP, TYPE_COL_SEND, TYPE_COL_RECV;
 
   MPI_Type_vector(h, 1, h, MPI_INT32_T, &TYPE_TMP);
   MPI_Type_create_resized(TYPE_TMP, 0, sizeof(int32_t), &TYPE_COL_SEND);
   MPI_Type_commit(&TYPE_COL_SEND);
-  MPI_Type_free(&TYPE_TMP); // TODO: Yay or nay?
+  MPI_Type_free(&TYPE_TMP);
 
   MPI_Type_vector(h, 1, w, MPI_INT32_T, &TYPE_TMP);
   MPI_Type_create_resized(TYPE_TMP, 0, sizeof(int32_t), &TYPE_COL_RECV);
-  MPI_Type_free(&TYPE_TMP);
   MPI_Type_commit(&TYPE_COL_RECV);
-
-  // Each process' individual slice of columns.
-  int32_t *slice = calloc(w * h, sizeof(*slice));
+  MPI_Type_free(&TYPE_TMP);
 
 
   // ---- Shearsort ----------------------------------------
-  if (rank == 0) {
-    //print_matrix(n, M);
-  }
 
   // Scatter initial matrix column slices.
   MPI_Scatter(
@@ -392,42 +415,26 @@ int main(int argc, char **argv)
   for (int step = 0; step < num_steps; step++) {
     // Do for d steps..
 
-    for (int row = 0; row < h; row++) {
-      // Sort rows locally.
-      if (even(row)) {
-        qsort(&slice[row*w], w, sizeof(int32_t), ascending);
-      } else {
-        qsort(&slice[row*w], w, sizeof(int32_t), descending);
-      }
-    }
-
-    // Rank of paired partner process for exchanges.
-    for (int i = 0; i < num_PEs; i++) {
-      int partner = -1;
-      if (i % 2 == 0) {
-        partner = even_rank ? rank + 1 : rank - 1;
-      }
-      else {
-        partner = even_rank ? rank - 1 : rank + 1;
-      }
-      if (partner >= 0 && partner < num_PEs) {
-        exchange_and_merge(partner, even_rank, w, h, slice);
-      }
-    }
+    // Sort rows locally.
+    sort_rows(w, h, slice);
+    // Sort rows globally.
+    odd_even_sort(w, h, slice, rank, num_PEs, even_rank);
     
-    // Skip last step?
-    sort_columns(w, h, slice);
+    if (step < num_steps-1) {
+      // Sort columns locally.
+      sort_columns(w, h, slice);
+    }
   }
 
-
+  // Gather sorted slices.
   MPI_Gather(
-      slice, // const void *sendbuf,
-      w, // int sendcount,
+      slice,         // const void *sendbuf,
+      w,             // int sendcount,
       TYPE_COL_RECV, // MPI_Datatype sendtype,
-      M, // void *recvbuf,
-      w, // int recvcount,
+      M,             // void *recvbuf,
+      w,             // int recvcount,
       TYPE_COL_SEND, // MPI_Datatype recvtype,
-      ROOT, // int root,
+      ROOT,          // int root,
       MPI_COMM_WORLD // MPI_Comm comm
   );
 
@@ -451,7 +458,6 @@ int main(int argc, char **argv)
     printf("%lf\n", slowest);
   }
 
-
   // TODO: Check only if user wants to.
   if (rank == ROOT) {
     //printf("Sorted:\n");
@@ -464,11 +470,7 @@ int main(int argc, char **argv)
   }
 
   // Clean up.
-  if (rank == ROOT) {
-    //print_matrix(n, M);
-    free(M);
-  }
-  // TODO: Free datatypes, slices..
+  free(M);
   free(slice);
   MPI_Type_free(&TYPE_COL_SEND);
   MPI_Type_free(&TYPE_COL_RECV);

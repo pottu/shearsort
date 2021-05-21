@@ -181,7 +181,6 @@ long partition(int32_t *data, int n, int col, long left, long right, long pivotI
 }
 
 void quicksort(int32_t *data, int n, int col, long left, long right) {
-
   if (right > left) {
     long pivotIndex = left + (right - left) / 2;
     long pivotNewIndex = partition(data, n, col, left, right, pivotIndex);
@@ -245,36 +244,24 @@ void merge(const int32_t *v1, int n1, const int32_t *v2, int n2,
 }
 
 
-void exchange_and_merge(int partner, bool even_rank, int w, int h, int32_t* M)
+void exchange_and_merge(int partner, int rank, int w, int h, int32_t *slice, 
+     int32_t *partner_slice, MPI_Datatype TYPE_ROW_SEND, MPI_Datatype TYPE_ROW_RECV)
 {
-  int rank;
-  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-
-  // TODO: stack array?
-  int32_t* partner_slice = calloc(w * (h/2), sizeof(*partner_slice));
-
-  // Handy types for sends/recvs.
-  MPI_Datatype TYPE_ROW_SEND, TYPE_ROW_RECV;
-  MPI_Type_vector(h/2, w, w*2, MPI_INT32_T, &TYPE_ROW_SEND);
-  MPI_Type_vector(h/2, w, w, MPI_INT32_T, &TYPE_ROW_RECV);
-  MPI_Type_commit(&TYPE_ROW_SEND);
-  MPI_Type_commit(&TYPE_ROW_RECV);
-
   // Even ranks send even rows, odd ranks odd rows. ????
-  int offset = even_rank ? w : 0;
+  int offset = even(rank) ? w : 0;
 
   // TODO: tags?
   MPI_Sendrecv(
-      M + offset,       // const void *sendbuf
+      slice + offset,   // const void *sendbuf
       1,                // int sendcount
       TYPE_ROW_SEND,    // MPI_Datatype sendtype
       partner,          // int dest 
-      TAG,              // int sendtag
+      rank,             // int sendtag
       partner_slice,    // void *recvbuf
       1,                // int recvcount
       TYPE_ROW_RECV,    // MPI_Datatype recvtype
       partner,          // int source
-      TAG,              // int recvtag
+      partner,          // int recvtag
       MPI_COMM_WORLD,   // MPI_Comm comm
       MPI_STATUS_IGNORE // MPI_Status *status
   );
@@ -283,61 +270,57 @@ void exchange_and_merge(int partner, bool even_rank, int w, int h, int32_t* M)
 
   int partner_row = 0;
   int32_t merged[w*2];
-  for (int row = even_rank ? 0 : 1; row < h; row += 2) {
+  for (int row = even(rank) ? 0 : 1; row < h; row += 2) {
     size_t s = w * sizeof(int32_t);
 
-    if (even_rank) {
-      merge(&M[row * w], w, &partner_slice[partner_row * w], w, merged, less);
+    if (even(rank)) {
+      merge(&slice[row * w], w, &partner_slice[partner_row * w], w, merged, less);
     } else {
-      merge(&M[row * w], w, &partner_slice[partner_row * w], w, merged, greater_equal);
+      merge(&slice[row * w], w, &partner_slice[partner_row * w], w, merged, greater_equal);
     }
 
     if (rank < partner) {
-      memcpy(&M[row * w], merged, s);
+      memcpy(&slice[row * w], merged, s);
       memcpy(&partner_slice[partner_row * w], &merged[w], s);
     } else {
-      memcpy(&M[row * w], &merged[w], s);
+      memcpy(&slice[row * w], &merged[w], s);
       memcpy(&partner_slice[partner_row * w], merged, s);
     }
     partner_row += 1;
   }
 
   MPI_Sendrecv_replace(
-      partner_slice,    // void *buf, 
-      w * (h/2),        // int count, 
-      MPI_INT32_T,      // MPI_Datatype datatype,
-      partner,          // int dest, 
-      TAG,              // int sendtag, 
-      partner,          // int source, 
-      TAG,              // int recvtag,
-      MPI_COMM_WORLD,   // MPI_Comm comm, 
-      MPI_STATUS_IGNORE // MPI_Status *status
+      partner_slice,         // void *buf, 
+      w * ceil((double)h/2), // int count, 
+      MPI_INT32_T,           // MPI_Datatype datatype,
+      partner,               // int dest, 
+      rank,                  // int sendtag, 
+      partner,               // int source, 
+      partner,               // int recvtag,
+      MPI_COMM_WORLD,        // MPI_Comm comm, 
+      MPI_STATUS_IGNORE      // MPI_Status *status
   );
 
   partner_row = 0;
-  for (int row = even_rank ? 1 : 0; row < h; row += 2) {
-    memcpy(&M[row * w], &partner_slice[partner_row * w], w * sizeof(int32_t));
+  for (int row = even(rank) ? 1 : 0; row < h; row += 2) {
+    memcpy(&slice[row * w], &partner_slice[partner_row * w], w * sizeof(int32_t));
     partner_row += 1;
   }
-
-  // TODO: free types, partner slice
-  free(partner_slice);
-  MPI_Type_free(&TYPE_ROW_SEND);
-  MPI_Type_free(&TYPE_ROW_RECV);
 }
 
 
-void odd_even_sort(int w, int h, int32_t *slice, int rank, int num_PEs, bool even_rank)
+void odd_even_sort(int w, int h, int32_t *slice, int32_t *partner_slice, int rank, 
+     int num_PEs, MPI_Datatype TYPE_ROW_SEND, MPI_Datatype TYPE_ROW_RECV)
 {
   for (int i = 0; i < num_PEs; i++) {
     int partner = -1;
     if (i % 2 == 0) {
-      partner = even_rank ? rank + 1 : rank - 1;
+      partner = even(rank) ? rank + 1 : rank - 1;
     } else {
-      partner = even_rank ? rank - 1 : rank + 1;
+      partner = even(rank) ? rank - 1 : rank + 1;
     }
     if (partner >= 0 && partner < num_PEs) {
-      exchange_and_merge(partner, even_rank, w, h, slice);
+      exchange_and_merge(partner, rank, w, h, slice, partner_slice, TYPE_ROW_SEND, TYPE_ROW_RECV);
     }
   }
 }
@@ -359,9 +342,6 @@ int main(int argc, char **argv)
   MPI_Comm_size(MPI_COMM_WORLD, &num_PEs);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   
-  // Track if own rank is odd or even.
-  bool even_rank = rank % 2 == 0; 
-
   int n; // Size of matrix
   int32_t* M = NULL; // Input matrix
 
@@ -379,22 +359,33 @@ int main(int argc, char **argv)
 
   // Each process' individual slice of columns.
   int32_t *slice = calloc(w * h, sizeof(*slice));
+  // Used for odd-even transposition sort.
+  // Allocating here allows reusage.
+  int32_t* partner_slice = calloc(w * ceil((double)h/2), sizeof(*partner_slice));
   
-  // Type for rows for handy send/receives.
+  // Types for sending and receiving columns.
   MPI_Datatype TYPE_TMP, TYPE_COL_SEND, TYPE_COL_RECV;
-
   MPI_Type_vector(h, 1, h, MPI_INT32_T, &TYPE_TMP);
   MPI_Type_create_resized(TYPE_TMP, 0, sizeof(int32_t), &TYPE_COL_SEND);
   MPI_Type_commit(&TYPE_COL_SEND);
   MPI_Type_free(&TYPE_TMP);
-
   MPI_Type_vector(h, 1, w, MPI_INT32_T, &TYPE_TMP);
   MPI_Type_create_resized(TYPE_TMP, 0, sizeof(int32_t), &TYPE_COL_RECV);
   MPI_Type_commit(&TYPE_COL_RECV);
   MPI_Type_free(&TYPE_TMP);
+  
+  // Types for sending and receiving rows.
+  MPI_Datatype TYPE_ROW_SEND, TYPE_ROW_RECV;
+  MPI_Type_vector(ceil((double)h/2), w, w*2, MPI_INT32_T, &TYPE_ROW_SEND);
+  MPI_Type_vector(ceil((double)h/2), w, w, MPI_INT32_T, &TYPE_ROW_RECV);
+  MPI_Type_commit(&TYPE_ROW_SEND);
+  MPI_Type_commit(&TYPE_ROW_RECV);
+
 
 
   // ---- Shearsort ----------------------------------------
+  // Start timer.
+  const double start = MPI_Wtime();
 
   // Scatter initial matrix column slices.
   MPI_Scatter(
@@ -408,9 +399,6 @@ int main(int argc, char **argv)
       MPI_COMM_WORLD // MPI_Comm comm
   );
 
-  // Start timer.
-  const double start = MPI_Wtime();
-
   int num_steps = ceil(log2(n)) + 1;
   for (int step = 0; step < num_steps; step++) {
     // Do for d steps..
@@ -418,7 +406,8 @@ int main(int argc, char **argv)
     // Sort rows locally.
     sort_rows(w, h, slice);
     // Sort rows globally.
-    odd_even_sort(w, h, slice, rank, num_PEs, even_rank);
+    odd_even_sort(w, h, slice, partner_slice, rank, num_PEs, 
+                  TYPE_ROW_SEND, TYPE_ROW_RECV);
     
     if (step < num_steps-1) {
       // Sort columns locally.
@@ -440,6 +429,7 @@ int main(int argc, char **argv)
 
   // Stop timer.
   const double my_execution_time = MPI_Wtime() - start;
+  // ---- End shearsort ------------------------------------
 
   // Find largest execution time.
   double slowest = 0;
@@ -460,7 +450,6 @@ int main(int argc, char **argv)
 
   // TODO: Check only if user wants to.
   if (rank == ROOT) {
-    //printf("Sorted:\n");
     print_matrix_file(n, M, output_file);
     if (checker(n, M, input_file)) {
       printf("Correct!\n");
@@ -472,8 +461,11 @@ int main(int argc, char **argv)
   // Clean up.
   free(M);
   free(slice);
+  free(partner_slice);
   MPI_Type_free(&TYPE_COL_SEND);
   MPI_Type_free(&TYPE_COL_RECV);
+  MPI_Type_free(&TYPE_ROW_SEND);
+  MPI_Type_free(&TYPE_ROW_RECV);
   MPI_Finalize();
   return 0;
 }

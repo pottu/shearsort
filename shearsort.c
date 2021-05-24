@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <unistd.h>
+#include <getopt.h>
 
 #define ROOT 0
 
@@ -33,6 +34,7 @@ int32_t* read_input(int* out_n, char* input_file)
       bad_input();
     }
   }
+  fclose(infile);
   return M;
 }
 
@@ -414,16 +416,44 @@ int main(int argc, char **argv)
   }
 
   // Gather sorted slices.
+  // NOTE: Not working on UPPMAX.
+  //MPI_Gather(
+  //    slice,         // const void *sendbuf,
+  //    w,             // int sendcount,
+  //    TYPE_COL_SLICE, // MPI_Datatype sendtype,
+  //    M,             // void *recvbuf,
+  //    w,             // int recvcount,
+  //    TYPE_COL_MATRIX, // MPI_Datatype recvtype,
+  //    ROOT,          // int root,
+  //    MPI_COMM_WORLD // MPI_Comm comm
+  //);
+
+  
+  // Gather slices in temporary array.
+  int32_t* tmp;
+  if (rank == ROOT) {
+    tmp = calloc(n*n, sizeof(int32_t));
+  }
+
   MPI_Gather(
       slice,         // const void *sendbuf,
-      w,             // int sendcount,
-      TYPE_COL_SLICE, // MPI_Datatype sendtype,
-      M,             // void *recvbuf,
-      w,             // int recvcount,
-      TYPE_COL_MATRIX, // MPI_Datatype recvtype,
+      w*h,             // int sendcount,
+      MPI_INT32_T, // MPI_Datatype sendtype,
+      tmp,             // void *recvbuf,
+      w*h,             // int recvcount,
+      MPI_INT32_T, // MPI_Datatype recvtype,
       ROOT,          // int root,
       MPI_COMM_WORLD // MPI_Comm comm
   );
+
+  // Copy slices to correct ordering.
+  if (rank == ROOT) {
+    for (int p = 0; p < num_PEs; p++) {
+      for (int row = 0; row < h; row++) {
+        memcpy(&M[(p * w) + (row * n)], &tmp[(p * w * h) + (row * w)], w * sizeof(int32_t));
+      }
+    }
+  }
 
   // Stop timer.
   const double my_execution_time = MPI_Wtime() - start;
@@ -467,6 +497,7 @@ int main(int argc, char **argv)
 
   // Clean up.
   free(M);
+  free(tmp);
   free(slice);
   free(partner_slice);
   MPI_Type_free(&TYPE_COL_MATRIX);

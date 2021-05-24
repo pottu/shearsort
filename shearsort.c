@@ -90,6 +90,13 @@ bool greater_equal(int32_t a, int32_t b)
   return a >= b;
 }
 
+void swap(int32_t *a, int32_t *b)
+{
+  int32_t tmp = *a;
+  *a = *b;
+  *b = tmp;
+}
+
 // ---- FUNCTIONALITY --------------------------------------
 bool check_same_elements(int n, int32_t *M, char *input_file)
 {
@@ -141,35 +148,28 @@ bool checker(int n, int32_t* M, char *input_file)
   return check_sorted(n, M) && check_same_elements(n, M, input_file);
 }
 
-long partition(int32_t *data, int n, int col, long left, long right, long pivotIndex)
+long partition(int32_t *data, int n, int col, long left, long right)
 {
-  const int32_t pivotValue = data[pivotIndex*n+col];
-  int32_t temp = data[pivotIndex*n+col];
-  data[pivotIndex*n+col] = data[right*n+col];
-  data[right*n+col] = temp;
-  long storeIndex = left;
+  long pivot_index = left + (right - left) / 2;
+  const int32_t pivot = data[pivot_index*n+col];
+  swap(&data[pivot_index*n+col], &data[right*n+col]);
 
   for (long i = left; i < right; i++) {
-    if (data[i*n+col] <= pivotValue) {
-      temp = data[i*n+col];
-      data[i*n+col] = data[storeIndex*n+col];
-      data[storeIndex*n+col] = temp;
-      storeIndex++;
+    if (data[i*n+col] <= pivot) {
+      swap(&data[i*n+col], &data[left*n+col]);
+      left++;
     }
   }
-  temp = data[storeIndex*n+col];
-  data[storeIndex*n+col] = data[right*n+col];
-  data[right*n+col] = temp;
-  return storeIndex;
+  swap(&data[left*n+col], &data[right*n+col]);
+  return left;
 }
 
 void quicksort(int32_t *data, int n, int col, long left, long right)
 {
   if (right > left) {
-    long pivotIndex = left + (right - left) / 2;
-    long pivotNewIndex = partition(data, n, col, left, right, pivotIndex);
-    quicksort(data, n, col, left, pivotNewIndex - 1);
-    quicksort(data, n, col, pivotNewIndex + 1, right);
+    long pivot_index = partition(data, n, col, left, right);
+    quicksort(data, n, col, left, pivot_index - 1);
+    quicksort(data, n, col, pivot_index + 1, right);
   }
 }
 
@@ -220,10 +220,8 @@ void merge(const int32_t *v1, int n1, const int32_t *v2, int n2,
 void exchange_and_merge(int partner, int rank, int w, int h, int32_t *slice, 
      int32_t *partner_slice, MPI_Datatype TYPE_ROW_SEND, MPI_Datatype TYPE_ROW_RECV)
 {
-  // Even ranks send even rows, odd ranks odd rows. ????
   int offset = even(rank) ? w : 0;
 
-  // TODO: tags?
   MPI_Sendrecv(
       slice + offset,   // const void *sendbuf
       1,                // int sendcount
@@ -238,8 +236,6 @@ void exchange_and_merge(int partner, int rank, int w, int h, int32_t *slice,
       MPI_COMM_WORLD,   // MPI_Comm comm
       MPI_STATUS_IGNORE // MPI_Status *status
   );
-
-
 
   int partner_row = 0;
   int32_t merged[w*2];
@@ -298,7 +294,7 @@ void odd_even_sort(int w, int h, int32_t *slice, int32_t *partner_slice, int ran
   }
 }
 
-// ---- main -----------------------------------------------
+// ---- MAIN -----------------------------------------------
 int main(int argc, char **argv) 
 {
   MPI_Init(&argc, &argv);
@@ -385,20 +381,20 @@ int main(int argc, char **argv)
 
 
 
-  // ---- Shearsort ----------------------------------------
   // Start timer.
   const double start = MPI_Wtime();
 
+  // ---- Shearsort ----------------------------------------
   // Scatter initial matrix column slices.
   MPI_Scatter(
-      M,             // const void *sendbuf
-      w,             // int sendcount
+      M,               // const void *sendbuf
+      w,               // int sendcount
       TYPE_COL_MATRIX, // MPI_Datatype sendtype
-      slice,         // void *recvbuf
-      w,             // int recvcount
-      TYPE_COL_SLICE, // MPI_Datatype recvtype
-      ROOT,          // int root
-      MPI_COMM_WORLD // MPI_Comm comm
+      slice,           // void *recvbuf
+      w,               // int recvcount
+      TYPE_COL_SLICE,  // MPI_Datatype recvtype
+      ROOT,            // int root
+      MPI_COMM_WORLD   // MPI_Comm comm
   );
 
   int num_steps = ceil(log2(n)) + 1;
@@ -418,14 +414,14 @@ int main(int argc, char **argv)
   // Gather sorted slices.
   // NOTE: Not working on UPPMAX.
   //MPI_Gather(
-  //    slice,         // const void *sendbuf,
-  //    w,             // int sendcount,
-  //    TYPE_COL_SLICE, // MPI_Datatype sendtype,
-  //    M,             // void *recvbuf,
-  //    w,             // int recvcount,
+  //    slice,           // const void *sendbuf,
+  //    w,               // int sendcount,
+  //    TYPE_COL_SLICE,  // MPI_Datatype sendtype,
+  //    M,               // void *recvbuf,
+  //    w,               // int recvcount,
   //    TYPE_COL_MATRIX, // MPI_Datatype recvtype,
-  //    ROOT,          // int root,
-  //    MPI_COMM_WORLD // MPI_Comm comm
+  //    ROOT,            // int root,
+  //    MPI_COMM_WORLD   // MPI_Comm comm
   //);
 
   
@@ -437,11 +433,11 @@ int main(int argc, char **argv)
 
   MPI_Gather(
       slice,         // const void *sendbuf,
-      w*h,             // int sendcount,
-      MPI_INT32_T, // MPI_Datatype sendtype,
-      tmp,             // void *recvbuf,
-      w*h,             // int recvcount,
-      MPI_INT32_T, // MPI_Datatype recvtype,
+      w*h,           // int sendcount,
+      MPI_INT32_T,   // MPI_Datatype sendtype,
+      tmp,           // void *recvbuf,
+      w*h,           // int recvcount,
+      MPI_INT32_T,   // MPI_Datatype recvtype,
       ROOT,          // int root,
       MPI_COMM_WORLD // MPI_Comm comm
   );
@@ -454,10 +450,10 @@ int main(int argc, char **argv)
       }
     }
   }
-
+  // ---- End shearsort ------------------------------------
+  
   // Stop timer.
   const double my_execution_time = MPI_Wtime() - start;
-  // ---- End shearsort ------------------------------------
 
   // Find largest execution time.
   double slowest = 0;
@@ -497,7 +493,6 @@ int main(int argc, char **argv)
 
   // Clean up.
   free(M);
-  free(tmp);
   free(slice);
   free(partner_slice);
   MPI_Type_free(&TYPE_COL_MATRIX);

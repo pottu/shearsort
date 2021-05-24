@@ -5,18 +5,20 @@
 #include <math.h>
 #include <stdbool.h>
 #include <string.h>
+#include <unistd.h>
 
 #define ROOT 0
-#define TAG  0
 
 // ---- INPUT / OUTPUT -------------------------------------
-void bad_input() {
+void bad_input()
+{
   printf("Bad input file.\n");
   MPI_Abort(MPI_COMM_WORLD, 1);
-  exit(0);
+  exit(EXIT_FAILURE);
 }
 
-int32_t* read_input(int* out_n, char* input_file) {
+int32_t* read_input(int* out_n, char* input_file)
+{
   FILE* infile = fopen(input_file, "r");
   if (!infile) {
     bad_input();
@@ -34,7 +36,8 @@ int32_t* read_input(int* out_n, char* input_file) {
   return M;
 }
 
-void print_matrix(int n, int32_t* M) {
+void print_matrix(int n, int32_t* M)
+{
   for (int row = 0; row < n; row++) {
     for (int col = 0; col < n; col++) {
       printf("%d ", M[row*n + col]);
@@ -43,23 +46,8 @@ void print_matrix(int n, int32_t* M) {
   }
 }
 
-void print_slice(int w, int h, int32_t* slice) 
+void print_matrix_file(int n, int32_t* M, char* output_file)
 {
-  int rank;
-  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-
-  printf("Process: %d\n", rank);
-  for (int i = 0; i < h; ++i) {
-    for (int j = 0; j < w; ++j) {
-      printf("%d ", slice[i*w + j]);
-    }
-    printf("\n");
-  }
-  fflush(stdout);
-}
-
-
-void print_matrix_file(int n, int32_t* M, char* output_file) {
   FILE *outfile = fopen(output_file, "w");
   for (int row = 0; row < n; row++) {
     for (int col = 0; col < n; col++) {
@@ -71,24 +59,33 @@ void print_matrix_file(int n, int32_t* M, char* output_file) {
 }
 
 // ---- HELPERS --------------------------------------------
-bool even(int n) {
+bool even(int n)
+{
   return n % 2 == 0;
 }
 
-bool odd(int n) {
-  return !even(n);
-}
-
-int ascending(const void* a, const void* b) {
+int ascending(const void* a, const void* b)
+{
   int32_t x = *((int32_t*)a);
   int32_t y = *((int32_t*)b);
   return (x > y) - (x < y);
 }
 
-int descending(const void* a, const void* b) {
+int descending(const void* a, const void* b)
+{
   int32_t x = *((int32_t*)a);
   int32_t y = *((int32_t*)b);
   return (x < y) - (x > y);
+}
+
+bool less(int32_t a, int32_t b)
+{
+  return a < b;
+}
+
+bool greater_equal(int32_t a, int32_t b)
+{
+  return a >= b;
 }
 
 // ---- FUNCTIONALITY --------------------------------------
@@ -105,7 +102,6 @@ bool check_same_elements(int n, int32_t *M, char *input_file)
   for (int i = 0; i < n*n; i++) {
     if (result[i] != initial[i]) {
       ret = false;
-      printf("Different elements detected!\n");
       break;
     }
   }
@@ -143,23 +139,8 @@ bool checker(int n, int32_t* M, char *input_file)
   return check_sorted(n, M) && check_same_elements(n, M, input_file);
 }
 
-
-void sort_column(int col, int w, int h, int32_t* M) {
-  bool swapped = true;
-  while (swapped) {
-    swapped = false;
-    for (int i = 0; i < h-1; i++) {
-      if (M[i*w + col] > M[(i+1)*w + col]) {
-        int32_t tmp = M[i*w + col];
-        M[i*w + col] = M[(i+1)*w + col];
-        M[(i+1)*w + col] = tmp;
-        swapped = true;
-      }
-    }
-  }
-}
-
-long partition(int32_t *data, int n, int col, long left, long right, long pivotIndex) {
+long partition(int32_t *data, int n, int col, long left, long right, long pivotIndex)
+{
   const int32_t pivotValue = data[pivotIndex*n+col];
   int32_t temp = data[pivotIndex*n+col];
   data[pivotIndex*n+col] = data[right*n+col];
@@ -180,7 +161,8 @@ long partition(int32_t *data, int n, int col, long left, long right, long pivotI
   return storeIndex;
 }
 
-void quicksort(int32_t *data, int n, int col, long left, long right) {
+void quicksort(int32_t *data, int n, int col, long left, long right)
+{
   if (right > left) {
     long pivotIndex = left + (right - left) / 2;
     long pivotNewIndex = partition(data, n, col, left, right, pivotIndex);
@@ -204,18 +186,7 @@ void sort_columns(int w, int h, int32_t* M)
 {
   for (int col = 0; col < w; col++) {
     quicksort(M, w, col, 0, h-1);
-    //sort_column(col, w, h, M);
   }
-}
-
-bool less(int32_t a, int32_t b)
-{
-  return a < b;
-}
-
-bool greater_equal(int32_t a, int32_t b)
-{
-  return a >= b;
 }
 
 void merge(const int32_t *v1, int n1, const int32_t *v2, int n2, 
@@ -328,19 +299,49 @@ void odd_even_sort(int w, int h, int32_t *slice, int32_t *partner_slice, int ran
 // ---- main -----------------------------------------------
 int main(int argc, char **argv) 
 {
-  if (3 != argc) {
-    printf("Usage: shearsort <input_file> <output_file>\n");
-    return 0;
-  }
-  char* input_file = argv[1];
-  char* output_file = argv[2];
-
   MPI_Init(&argc, &argv);
   
   // Find own rank and number of PEs.
   int num_PEs, rank;
   MPI_Comm_size(MPI_COMM_WORLD, &num_PEs);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+  // Parse arguments.
+  char* input_file = NULL;
+  char* output_file = NULL;
+  bool check_solution = false;
+  bool suppress_output = false;
+
+  if (rank == ROOT) {
+    int opt;
+    while ((opt = getopt(argc, argv, "cso:")) != -1) {
+      switch (opt) {
+      case 'c': 
+        check_solution = true; 
+        break;
+      case 's': 
+        suppress_output = true; 
+        break;
+      case 'o': 
+        output_file = optarg;
+        break;
+      default:
+        fprintf(stderr, "Usage: %s [-cs] [-o <output-file>] <input-file> \n", argv[0]);
+        MPI_Abort(MPI_COMM_WORLD, 1);
+        exit(EXIT_FAILURE);
+      }
+    }
+
+    if (optind >= argc) {
+      fprintf(stderr, "Expected input file.\n");
+      fprintf(stderr, "Usage: %s [-cs] [-o <output-file>] <input-file> \n", argv[0]);
+      MPI_Abort(MPI_COMM_WORLD, 1);
+      exit(EXIT_FAILURE);
+    }
+
+    input_file = argv[optind];
+  }
+
   
   int n; // Size of matrix
   int32_t* M = NULL; // Input matrix
@@ -364,17 +365,16 @@ int main(int argc, char **argv)
   int32_t* partner_slice = calloc(w * ceil((double)h/2), sizeof(*partner_slice));
   
   // Types for sending and receiving columns.
-  MPI_Datatype TYPE_TMP, TYPE_COL_SEND, TYPE_COL_RECV;
+  MPI_Datatype TYPE_TMP, TYPE_TMP2, TYPE_COL_MATRIX, TYPE_COL_SLICE;
   MPI_Type_vector(h, 1, h, MPI_INT32_T, &TYPE_TMP);
-  MPI_Type_create_resized(TYPE_TMP, 0, sizeof(int32_t), &TYPE_COL_SEND);
-  MPI_Type_commit(&TYPE_COL_SEND);
-  MPI_Type_free(&TYPE_TMP);
-  MPI_Type_vector(h, 1, w, MPI_INT32_T, &TYPE_TMP);
-  MPI_Type_create_resized(TYPE_TMP, 0, sizeof(int32_t), &TYPE_COL_RECV);
-  MPI_Type_commit(&TYPE_COL_RECV);
-  MPI_Type_free(&TYPE_TMP);
+  MPI_Type_create_resized(TYPE_TMP, 0, sizeof(int32_t), &TYPE_COL_MATRIX);
+  MPI_Type_commit(&TYPE_COL_MATRIX);
   
-  // Types for sending and receiving rows.
+  MPI_Type_vector(h, 1, w, MPI_INT32_T, &TYPE_TMP2);
+  MPI_Type_create_resized(TYPE_TMP2, 0, sizeof(int32_t), &TYPE_COL_SLICE);
+  MPI_Type_commit(&TYPE_COL_SLICE);
+  
+  // Types for sending and receiving row slices.
   MPI_Datatype TYPE_ROW_SEND, TYPE_ROW_RECV;
   MPI_Type_vector(ceil((double)h/2), w, w*2, MPI_INT32_T, &TYPE_ROW_SEND);
   MPI_Type_vector(ceil((double)h/2), w, w, MPI_INT32_T, &TYPE_ROW_RECV);
@@ -391,18 +391,16 @@ int main(int argc, char **argv)
   MPI_Scatter(
       M,             // const void *sendbuf
       w,             // int sendcount
-      TYPE_COL_SEND, // MPI_Datatype sendtype
+      TYPE_COL_MATRIX, // MPI_Datatype sendtype
       slice,         // void *recvbuf
       w,             // int recvcount
-      TYPE_COL_RECV, // MPI_Datatype recvtype
+      TYPE_COL_SLICE, // MPI_Datatype recvtype
       ROOT,          // int root
       MPI_COMM_WORLD // MPI_Comm comm
   );
 
   int num_steps = ceil(log2(n)) + 1;
   for (int step = 0; step < num_steps; step++) {
-    // Do for d steps..
-
     // Sort rows locally.
     sort_rows(w, h, slice);
     // Sort rows globally.
@@ -419,10 +417,10 @@ int main(int argc, char **argv)
   MPI_Gather(
       slice,         // const void *sendbuf,
       w,             // int sendcount,
-      TYPE_COL_RECV, // MPI_Datatype sendtype,
+      TYPE_COL_SLICE, // MPI_Datatype sendtype,
       M,             // void *recvbuf,
       w,             // int recvcount,
-      TYPE_COL_SEND, // MPI_Datatype recvtype,
+      TYPE_COL_MATRIX, // MPI_Datatype recvtype,
       ROOT,          // int root,
       MPI_COMM_WORLD // MPI_Comm comm
   );
@@ -448,13 +446,22 @@ int main(int argc, char **argv)
     printf("%lf\n", slowest);
   }
 
-  // TODO: Check only if user wants to.
   if (rank == ROOT) {
-    print_matrix_file(n, M, output_file);
-    if (checker(n, M, input_file)) {
-      printf("Correct!\n");
-    } else {
-      printf("Incorrect!\n");
+    if (!suppress_output) {
+      // Output sorted matrix.
+      if (output_file) {
+        print_matrix_file(n, M, output_file);
+      } else {
+        print_matrix(n, M);
+      }
+    }
+    if (check_solution) {
+      // Check if correctly sorted.
+      if (checker(n, M, input_file)) {
+        printf("Correct!\n");
+      } else {
+        printf("Incorrect!\n");
+      }
     }
   }
 
@@ -462,8 +469,8 @@ int main(int argc, char **argv)
   free(M);
   free(slice);
   free(partner_slice);
-  MPI_Type_free(&TYPE_COL_SEND);
-  MPI_Type_free(&TYPE_COL_RECV);
+  MPI_Type_free(&TYPE_COL_MATRIX);
+  MPI_Type_free(&TYPE_COL_SLICE);
   MPI_Type_free(&TYPE_ROW_SEND);
   MPI_Type_free(&TYPE_ROW_RECV);
   MPI_Finalize();

@@ -13,8 +13,8 @@ mpirun -n 2 ./shearsort <input-file>
 
 ## Input
 The program reads a given input matrix from a file. The expected format is as follows:
-- A positive integer `n` specifying the matrix size (`n`x`n`), followed by a new line.
-- `n` lines of `n` integers each, separated by a space.
+1. A positive integer `n` specifying the matrix size (`n`x`n`), followed by a new line.
+2. `n` lines of `n` integers each, separated by a space.
 
 The python script `gen.py` can be used to generate random input files:
 ```

@@ -347,6 +347,12 @@ int main(int argc, char **argv)
   // Root reads input matrix.
   if (rank == ROOT) {
     M = read_input(&n, input_file);
+
+    if (n % num_PEs != 0) {
+      fprintf(stderr, "Matrix size should be divisible by the number of processes.\n");
+      MPI_Abort(MPI_COMM_WORLD, 1);
+      exit(EXIT_FAILURE);
+    }
   }
 
   // Broadcast matrix size to all PEs.
@@ -412,7 +418,9 @@ int main(int argc, char **argv)
   }
 
   // Gather sorted slices.
-  // NOTE: Not working on UPPMAX.
+  // NOTE: Not working on UPPMAX. 
+  // Use simpler gather and copy elements afterwards as below.
+  
   //MPI_Gather(
   //    slice,           // const void *sendbuf,
   //    w,               // int sendcount,
@@ -426,7 +434,7 @@ int main(int argc, char **argv)
 
   
   // Gather slices in temporary array.
-  int32_t* tmp;
+  int32_t* tmp = NULL;
   if (rank == ROOT) {
     tmp = calloc(n*n, sizeof(int32_t));
   }
@@ -493,6 +501,7 @@ int main(int argc, char **argv)
 
   // Clean up.
   free(M);
+  free(tmp);
   free(slice);
   free(partner_slice);
   MPI_Type_free(&TYPE_COL_MATRIX);

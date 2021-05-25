@@ -3,8 +3,8 @@
 import sys
 import random
 
-LB = -1000000000
-UB = 10000000000
+LB = -100000000
+UB =  100000000
 
 try:
   n = int(sys.argv[1])
@@ -15,7 +15,7 @@ except:
 with open("input/{}x{}.txt".format(str(n), str(n)), "w") as f:
   f.write(str(n) + '\n')
   
-  nums = random.sample(range(LB, UB), k=n*n)
+  nums = random.choices(range(LB, UB), k=n*n)
 
   for row in range(n):
     for col in range(n):
